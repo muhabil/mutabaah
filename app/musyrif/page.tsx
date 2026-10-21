@@ -7,102 +7,172 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   LogOut,
   Users,
-  BookOpen,
-  CheckCircle2,
-  Calendar,
-  Award,
-  Sparkles,
-  RefreshCw,
-  UserCheck,
-  Clock,
   LayoutDashboard,
+  Shield,
+  Layers,
+  ChevronRight,
+  PlusCircle,
+  Plus,
+  ExternalLink,
+  XCircle,
+  Sun,
+  Moon,
 } from 'lucide-react';
+import { useTheme } from '@/lib/ThemeContext';
 
 interface UserData {
   nim: string;
   nama: string;
   role: string;
+  group_id?: string;
 }
 
-export default function DashboardMusyrif() {
+interface GroupItem {
+  id: string;
+  nama_kelompok: string;
+  kode_kelompok: string;
+  kategori: string;
+  musyrif_nim: string | null;
+  total_members?: number;
+}
+
+export default function MusyrifHubPage() {
   const router = useRouter();
+  const { theme, toggleTheme } = useTheme();
   const [musyrif, setMusyrif] = useState<UserData | null>(null);
-  const [selectedDate, setSelectedDate] = useState('');
-  const [activeTab, setActiveTab] = useState<'mutabaah' | 'setoran'>('mutabaah');
+  const [groups, setGroups] = useState<GroupItem[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // State Data Kelompok
-  const [anggotaList, setAnggotaList] = useState<UserData[]>([]);
-  const [mutabaahMap, setMutabaahMap] = useState<Record<string, any>>({});
-  const [setoranList, setSetoranList] = useState<any[]>([]);
+  // State Modal Buat Kelompok Baru oleh Musyrif
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [namaKelompok, setNamaKelompok] = useState('');
+  const [kodeKelompok, setKodeKelompok] = useState('');
+  const [kategori, setKategori] = useState<'kampus' | 'umum'>('kampus');
+  const [formError, setFormError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    const now = new Date();
-    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    setSelectedDate(localDate);
-
     const saved = localStorage.getItem('mutabaah_user');
     if (!saved) {
       router.push('/');
       return;
     }
-    const parsedUser: UserData = JSON.parse(saved);
-    if (parsedUser.role !== 'musyrif') {
+    const user: UserData = JSON.parse(saved);
+    if (user.role !== 'musyrif' && user.role !== 'admin') {
       router.push('/dashboard');
       return;
     }
-    setMusyrif(parsedUser);
-    fetchGroupData(localDate);
+    setMusyrif(user);
+    loadMusyrifGroups(user);
   }, [router]);
 
-  const fetchGroupData = async (dateToFetch: string) => {
+  const loadMusyrifGroups = async (user: UserData) => {
     setLoading(true);
     try {
-      // 1. Ambil semua daftar anggota (termasuk musyrif jika ingin dipantau, atau khusus anggota)
-      const { data: usersData } = await supabase
-        .from('users')
-        .select('nim, nama, role')
-        .order('role', { ascending: true })
-        .order('nama', { ascending: true });
+      let query = supabase.from('groups').select('*');
 
-      if (usersData) setAnggotaList(usersData);
-
-      // 2. Ambil log mutabaah pada tanggal yang dipilih
-      const { data: mutabaahData } = await supabase
-        .from('mutabaah_logs')
-        .select('*')
-        .eq('tanggal', dateToFetch);
-
-      const map: Record<string, any> = {};
-      if (mutabaahData) {
-        mutabaahData.forEach((log) => {
-          map[log.user_nim] = log;
-        });
+      // Jika role adalah musyrif biasa (bukan admin), tampilkan kelompok yang diampu atau yang group_id nya cocok
+      if (user.role === 'musyrif') {
+        query = query.or(`musyrif_nim.eq.${user.nim},id.eq.${user.group_id || '00000000-0000-0000-0000-000000000000'}`);
       }
-      setMutabaahMap(map);
 
-      // 3. Ambil semua log setoran terbaru
-      const { data: setoranData } = await supabase
-        .from('setoran_logs')
-        .select(`
-          *,
-          penyetor:users!setoran_logs_penyetor_nim_fkey(nama),
-          penyimak:users!setoran_logs_penyimak_nim_fkey(nama)
-        `)
-        .order('created_at', { ascending: false })
-        .limit(30);
+      const { data: groupList } = await query.order('created_at', { ascending: false });
 
-      if (setoranData) setSetoranList(setoranData);
-    } catch (error) {
-      console.error('Gagal mengambil data kelompok:', error);
+      if (groupList) {
+        // Ambil hitungan anggota tiap grup
+        const { data: usersData } = await supabase.from('users').select('group_id');
+        const countMap: Record<string, number> = {};
+        if (usersData) {
+          usersData.forEach((u) => {
+            if (u.group_id) {
+              countMap[u.group_id] = (countMap[u.group_id] || 0) + 1;
+            }
+          });
+        }
+
+        const enriched = groupList.map((g) => ({
+          ...g,
+          total_members: countMap[g.id] || 0,
+        }));
+
+        setGroups(enriched);
+      }
+    } catch (err) {
+      console.error('Error fetching musyrif groups:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDateChange = (newDate: string) => {
-    setSelectedDate(newDate);
-    fetchGroupData(newDate);
+  const handleCreateGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!musyrif) return;
+
+    setFormError('');
+    setSubmitting(true);
+
+    try {
+      const cleanKode = kodeKelompok.trim().toUpperCase();
+      if (!cleanKode || !namaKelompok.trim()) {
+        setFormError('Nama dan Kode kelompok wajib diisi.');
+        setSubmitting(false);
+        return;
+      }
+
+      // Cek apakah kode sudah dipakai
+      const { data: existing } = await supabase
+        .from('groups')
+        .select('id')
+        .eq('kode_kelompok', cleanKode)
+        .single();
+
+      if (existing) {
+        setFormError(`Kode kelompok "${cleanKode}" sudah digunakan! Buat kode lain.`);
+        setSubmitting(false);
+        return;
+      }
+
+      // Insert grup baru dengan musyrif_nim adalah musyrif saat ini
+      const { data: newGroup, error } = await supabase
+        .from('groups')
+        .insert([
+          {
+            nama_kelompok: namaKelompok.trim(),
+            kode_kelompok: cleanKode,
+            kategori: kategori,
+            musyrif_nim: musyrif.nim,
+          },
+        ])
+        .select()
+        .single();
+
+      if (error) {
+        setFormError('Gagal membuat kelompok: ' + error.message);
+        setSubmitting(false);
+        return;
+      }
+
+      // Update group_id musyrif jika belum punya
+      if (!musyrif.group_id) {
+        await supabase
+          .from('users')
+          .update({ group_id: newGroup.id })
+          .eq('nim', musyrif.nim);
+
+        const updated = { ...musyrif, group_id: newGroup.id };
+        setMusyrif(updated);
+        localStorage.setItem('mutabaah_user', JSON.stringify(updated));
+      }
+
+      setIsCreateModalOpen(false);
+      setNamaKelompok('');
+      setKodeKelompok('');
+      loadMusyrifGroups(musyrif);
+    } catch (err: any) {
+      setFormError(err.message || 'Terjadi kesalahan');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleLogout = () => {
@@ -110,41 +180,39 @@ export default function DashboardMusyrif() {
     router.push('/');
   };
 
-  // Hitung skor per anggota
-  const calculateMemberScore = (log: any) => {
-    if (!log) return 0;
-    let score = 0;
-    if (log.shalat_jamaah >= 3) score += 20;
-    if (log.tilawah_halaman >= 1) score += 20;
-    if (log.qiyamul_lail) score += 20;
-    if (log.dhuha) score += 20;
-    if (log.almatsurat) score += 20;
-    return score;
-  };
-
-  const sudahIsiCount = Object.keys(mutabaahMap).length;
-
   return (
-    <div className="min-h-screen bg-stone-100 pb-14">
-      {/* Header Navbar */}
-      <div className="bg-white border-b border-stone-200 sticky top-0 z-20">
+    <div className="min-h-screen bg-stone-100 dark:bg-stone-950 pb-16">
+      {/* Header */}
+      <div className="bg-white dark:bg-stone-900 border-b border-stone-200 dark:border-stone-800 sticky top-0 z-20 shadow-sm">
         <div className="max-w-4xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
-              <Sparkles className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
-                Musyrif Control Room
-              </span>
-              <h1 className="text-lg font-bold text-stone-800 mt-0.5">
-                Halo Musyrif, {musyrif?.nama}!
-              </h1>
-            </div>
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
+              Musyrif Command Hub
+            </span>
+            <h1 className="text-base sm:text-lg font-bold text-stone-800 dark:text-stone-100 mt-1">
+              Ahlan wa Sahlan, {musyrif?.nama}!
+            </h1>
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Tombol ke Dashboard Pribadi agar Musyrif juga bisa isi mutabaah */}
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-xl bg-stone-100 dark:bg-stone-800 hover:bg-stone-200 dark:hover:bg-stone-700 text-stone-600 dark:text-stone-300 transition cursor-pointer"
+              title="Ganti Tema"
+            >
+              {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-stone-600" />}
+            </button>
+
+            {musyrif?.role === 'admin' && (
+              <button
+                onClick={() => router.push('/admin')}
+                className="px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
+              >
+                <Shield className="w-4 h-4" />
+                <span>Panel Admin</span>
+              </button>
+            )}
+
             <button
               onClick={() => router.push('/dashboard')}
               className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
@@ -155,7 +223,7 @@ export default function DashboardMusyrif() {
 
             <button
               onClick={handleLogout}
-              className="p-2 rounded-xl bg-stone-100 hover:bg-red-50 text-stone-600 hover:text-red-600 transition flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
+              className="p-2 rounded-xl bg-stone-100 dark:bg-stone-950 hover:bg-red-50 text-stone-600 dark:text-stone-300 hover:text-red-600 transition flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
             >
               <LogOut className="w-4 h-4" />
               <span className="hidden sm:inline">Keluar</span>
@@ -164,301 +232,183 @@ export default function DashboardMusyrif() {
         </div>
       </div>
 
-      {/* Konten Utama Lebar Responsif */}
-      <div className="max-w-4xl mx-auto px-4 pt-6 space-y-6">
-        {/* Ringkasan Statistik (3 Kartu) */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <motion.div
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-white p-5 rounded-3xl border border-stone-200 shadow-sm flex items-center justify-between"
-          >
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-stone-400">
-                Total Anggota Liqo
-              </p>
-              <h2 className="text-2xl font-bold text-stone-800 mt-1">
-                {anggotaList.length} Orang
-              </h2>
-            </div>
-            <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <Users className="w-6 h-6" />
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.05 }}
-            className="bg-white p-5 rounded-3xl border border-stone-200 shadow-sm flex items-center justify-between"
-          >
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-stone-400">
-                Sudah Mengisi ({selectedDate})
-              </p>
-              <h2 className="text-2xl font-bold text-emerald-600 mt-1">
-                {sudahIsiCount} / {anggotaList.length}
-              </h2>
-            </div>
-            <div className="w-12 h-12 rounded-2xl bg-teal-50 text-teal-600 flex items-center justify-center">
-              <UserCheck className="w-6 h-6" />
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="bg-white p-5 rounded-3xl border border-stone-200 shadow-sm flex items-center justify-between"
-          >
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-stone-400">
-                Total Setoran Masuk
-              </p>
-              <h2 className="text-2xl font-bold text-stone-800 mt-1">
-                {setoranList.length} Catatan
-              </h2>
-            </div>
-            <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center">
-              <BookOpen className="w-6 h-6" />
-            </div>
-          </motion.div>
-        </div>
-
-        {/* Baris Kontrol: Tab Switcher & Filter Tanggal */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-3 rounded-2xl border border-stone-200">
-          {/* Sliding Pill Tabs */}
-          <div className="relative flex bg-stone-100 p-1 rounded-xl sm:w-80">
-            <button
-              onClick={() => setActiveTab('mutabaah')}
-              className={`relative z-10 flex-1 py-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
-                activeTab === 'mutabaah' ? 'text-emerald-800' : 'text-stone-500'
-              }`}
-            >
-              {activeTab === 'mutabaah' && (
-                <motion.div
-                  layoutId="musyrifTab"
-                  transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
-                  className="absolute inset-0 bg-white rounded-lg shadow-sm -z-10"
-                />
-              )}
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Rekap Mutabaah</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('setoran')}
-              className={`relative z-10 flex-1 py-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
-                activeTab === 'setoran' ? 'text-emerald-800' : 'text-stone-500'
-              }`}
-            >
-              {activeTab === 'setoran' && (
-                <motion.div
-                  layoutId="musyrifTab"
-                  transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
-                  className="absolute inset-0 bg-white rounded-lg shadow-sm -z-10"
-                />
-              )}
-              <BookOpen className="w-4 h-4" />
-              <span>Log Setoran</span>
-            </button>
+      <div className="max-w-4xl mx-auto px-4 pt-8 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-stone-800 dark:text-stone-100">Pilih Kelompok Binaan</h2>
+            <p className="text-xs text-stone-500 mt-0.5">
+              Pilih kelompok mentoring untuk memantau rekap mutabaah harian & live feed setoran Qur&apos;an.
+            </p>
           </div>
 
-          {/* Filter Tanggal & Tombol Refresh */}
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1 sm:flex-initial">
-              <Calendar className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => handleDateChange(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 rounded-xl border border-stone-200 bg-stone-50 text-xs font-semibold text-stone-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-            <button
-              onClick={() => fetchGroupData(selectedDate)}
-              className="p-2.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-600 transition cursor-pointer"
-              title="Refresh Data"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
+          <button
+            onClick={() => setIsCreateModalOpen(true)}
+            className="px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-sm shadow-emerald-600/20 transition cursor-pointer self-start sm:self-auto"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Buat Kelompok Baru</span>
+          </button>
         </div>
 
-        {/* Isi Konten Tab */}
-        <AnimatePresence mode="wait">
-          {activeTab === 'mutabaah' ? (
-            <motion.div
-              key="rekap-mutabaah"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="grid grid-cols-1 md:grid-cols-2 gap-4"
+        {loading ? (
+          <div className="bg-white dark:bg-stone-900 p-12 rounded-3xl border border-stone-200 dark:border-stone-800 text-center text-xs text-stone-400">
+            Memuat data kelompok...
+          </div>
+        ) : groups.length === 0 ? (
+          <div className="bg-white dark:bg-stone-900 p-10 rounded-3xl border border-stone-200 dark:border-stone-800 text-center space-y-4">
+            <Layers className="w-10 h-10 text-stone-300 mx-auto" />
+            <div>
+              <h3 className="font-bold text-stone-700 dark:text-stone-200 text-base">Belum Ada Kelompok Binaan</h3>
+              <p className="text-xs text-stone-400 max-w-sm mx-auto mt-1">
+                Antum belum memiliki kelompok binaan. Yuk buat kelompok mentoring baru sekarang untuk mendapatkan kode kelompok!
+              </p>
+            </div>
+            <button
+              onClick={() => setIsCreateModalOpen(true)}
+              className="px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold inline-flex items-center gap-2 shadow-sm transition cursor-pointer"
             >
-              {anggotaList.map((member) => {
-                const log = mutabaahMap[member.nim];
-                const score = calculateMemberScore(log);
-
-                return (
-                  <div
-                    key={member.nim}
-                    className="bg-white p-5 rounded-3xl border border-stone-200 shadow-sm flex flex-col justify-between space-y-4"
-                  >
-                    <div>
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="font-bold text-stone-800">
-                              {member.nama}
-                            </h3>
-                            {member.role === 'musyrif' && (
-                              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800">
-                                Musyrif
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-stone-400">NIM: {member.nim}</p>
-                        </div>
-
-                        <span
-                          className={`text-xs font-bold px-3 py-1 rounded-full ${
-                            log
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : 'bg-stone-100 text-stone-400'
-                          }`}
-                        >
-                          {log ? `${score}% Tuntas` : 'Belum Isi'}
-                        </span>
-                      </div>
-
-                      {/* Progress Bar Mini */}
-                      <div className="w-full h-2 bg-stone-100 rounded-full overflow-hidden mt-3">
-                        <motion.div
-                          initial={{ width: 0 }}
-                          animate={{ width: `${score}%` }}
-                          className="h-full bg-emerald-500 rounded-full"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Rincian Indikator Ibadah */}
-                    {log ? (
-                      <div className="grid grid-cols-5 gap-1.5 pt-2 border-t border-stone-100 text-center">
-                        <div className="p-2 rounded-xl bg-stone-50">
-                          <p className="text-[10px] text-stone-400 font-semibold">
-                            Jamaah
-                          </p>
-                          <p className="text-xs font-bold text-stone-800 mt-0.5">
-                            {log.shalat_jamaah}/5
-                          </p>
-                        </div>
-                        <div className="p-2 rounded-xl bg-stone-50">
-                          <p className="text-[10px] text-stone-400 font-semibold">
-                            Tilawah
-                          </p>
-                          <p className="text-xs font-bold text-stone-800 mt-0.5">
-                            {log.tilawah_halaman} hal
-                          </p>
-                        </div>
-                        <div
-                          className={`p-2 rounded-xl ${
-                            log.qiyamul_lail
-                              ? 'bg-emerald-50 text-emerald-700'
-                              : 'bg-stone-50 text-stone-300'
-                          }`}
-                        >
-                          <p className="text-[10px] font-semibold">Tahajud</p>
-                          <p className="text-xs font-bold mt-0.5">
-                            {log.qiyamul_lail ? '✓' : '—'}
-                          </p>
-                        </div>
-                        <div
-                          className={`p-2 rounded-xl ${
-                            log.dhuha
-                              ? 'bg-emerald-50 text-emerald-700'
-                              : 'bg-stone-50 text-stone-300'
-                          }`}
-                        >
-                          <p className="text-[10px] font-semibold">Dhuha</p>
-                          <p className="text-xs font-bold mt-0.5">
-                            {log.dhuha ? '✓' : '—'}
-                          </p>
-                        </div>
-                        <div
-                          className={`p-2 rounded-xl ${
-                            log.almatsurat
-                              ? 'bg-emerald-50 text-emerald-700'
-                              : 'bg-stone-50 text-stone-300'
-                          }`}
-                        >
-                          <p className="text-[10px] font-semibold">Matsurat</p>
-                          <p className="text-xs font-bold mt-0.5">
-                            {log.almatsurat ? '✓' : '—'}
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="pt-2 border-t border-stone-100 text-xs text-stone-400 flex items-center gap-1.5">
-                        <Clock className="w-3.5 h-3.5" />
-                        <span>Belum ada laporan masuk pada tanggal ini.</span>
-                      </div>
-                    )}
+              <Plus className="w-4 h-4" />
+              <span>Buat Kelompok Pertamamu</span>
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {groups.map((g) => (
+              <motion.div
+                key={g.id}
+                whileHover={{ y: -3 }}
+                onClick={() => router.push(`/musyrif/${g.id}`)}
+                className="bg-white dark:bg-stone-900 p-5 rounded-3xl border border-stone-200 dark:border-stone-800 hover:border-emerald-300 shadow-sm cursor-pointer transition flex flex-col justify-between space-y-4"
+              >
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span
+                      className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${
+                        g.kategori === 'kampus'
+                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                          : 'bg-amber-50 text-amber-700 border border-amber-200'
+                      }`}
+                    >
+                      {g.kategori === 'kampus' ? '🏛️ Kampus' : '🕌 Halaqah Umum'}
+                    </span>
+                    <span className="text-xs font-mono font-bold bg-stone-100 dark:bg-stone-950 text-stone-700 dark:text-stone-200 px-2 py-0.5 rounded-lg border border-stone-200 dark:border-stone-800">
+                      {g.kode_kelompok}
+                    </span>
                   </div>
-                );
-              })}
-            </motion.div>
-          ) : (
-            <motion.div
-              key="log-setoran"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="space-y-3"
-            >
-              {setoranList.length === 0 ? (
-                <div className="bg-white p-8 rounded-3xl border border-stone-200 text-center text-sm text-stone-400">
-                  Belum ada catatan setoran Al-Qur&apos;an dari anggota kelompok.
+
+                  <h3 className="font-bold text-base text-stone-800 dark:text-stone-100 mt-3">
+                    {g.nama_kelompok}
+                  </h3>
+
+                  <div className="flex items-center gap-1.5 text-xs text-stone-500 mt-2">
+                    <Users className="w-3.5 h-3.5 text-stone-400" />
+                    <span>{g.total_members} Anggota Terdaftar</span>
+                  </div>
                 </div>
-              ) : (
-                setoranList.map((item) => (
-                  <div
-                    key={item.id}
-                    className="bg-white p-4 sm:p-5 rounded-2xl border border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-stone-800 text-sm">
-                          {item.penyetor?.nama || item.penyetor_nim}
-                        </span>
-                        <span className="text-xs text-stone-400">menyetor ke</span>
-                        <span className="font-semibold text-emerald-700 text-sm">
-                          {item.penyimak?.nama || item.penyimak_nim}
-                        </span>
-                      </div>
-                      <p className="text-sm font-semibold text-stone-700">
-                        📖 QS. {item.surah} : Ayat {item.ayat}
-                      </p>
-                    </div>
 
-                    <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 pt-2 sm:pt-0 border-stone-100">
-                      <span className="text-xs text-stone-400">{item.tanggal}</span>
-                      <span
-                        className={`text-[10px] font-bold uppercase px-3 py-1 rounded-full ${
-                          item.jenis === 'ziyadah'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-amber-100 text-amber-800'
-                        }`}
-                      >
-                        {item.jenis === 'ziyadah' ? '🌱 Ziyadah' : '🔄 Murajaah'}
-                      </span>
-                    </div>
-                  </div>
-                ))
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
+                <div className="pt-3 border-t border-stone-100 dark:border-stone-850 flex items-center justify-between text-xs font-semibold text-emerald-600">
+                  <span>Masuk Kontrol Panel</span>
+                  <ChevronRight className="w-4 h-4" />
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
       </div>
+
+      {/* Modal Buat Kelompok Baru oleh Musyrif */}
+      <AnimatePresence>
+        {isCreateModalOpen && (
+          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white dark:bg-stone-900 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-stone-100 dark:border-stone-850 space-y-4"
+            >
+              <div className="flex items-center justify-between pb-2 border-b border-stone-100 dark:border-stone-850">
+                <h3 className="font-bold text-lg text-stone-800 dark:text-stone-100">Buat Kelompok Baru</h3>
+                <button
+                  onClick={() => setIsCreateModalOpen(false)}
+                  className="p-1 rounded-lg text-stone-400 hover:text-stone-600 dark:text-stone-300 cursor-pointer"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+
+              {formError && (
+                <div className="p-3 bg-red-50 text-red-600 rounded-xl text-xs font-medium">
+                  {formError}
+                </div>
+              )}
+
+              <form onSubmit={handleCreateGroup} className="space-y-3.5">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1">
+                    Nama Kelompok Mentoring
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Contoh: Halaqah Salman Al-Farisi"
+                    value={namaKelompok}
+                    onChange={(e) => setNamaKelompok(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-800/60 text-xs font-semibold text-stone-800 dark:text-stone-100 focus:bg-white dark:bg-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1">
+                    Kode Kelompok (Unik untuk Anggota)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Contoh: FARISI-01 atau BINAAN-01"
+                    value={kodeKelompok}
+                    onChange={(e) => setKodeKelompok(e.target.value.toUpperCase())}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-800/60 text-xs font-mono font-bold uppercase text-stone-800 dark:text-stone-100 focus:bg-white dark:bg-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <p className="text-[10px] text-stone-400 mt-1">
+                    Kode ini yang akan antum bagikan ke anggota halaqah antum.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1">
+                    Kategori Kelompok
+                  </label>
+                  <select
+                    value={kategori}
+                    onChange={(e: any) => setKategori(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-800/60 text-xs font-semibold text-stone-800 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="kampus">🏛️ Kader / Mahasiswa Internal Kampus</option>
+                    <option value="umum">🕌 Kelompok Pengajian Eksternal / Halaqah Umum</option>
+                  </select>
+                </div>
+
+                <div className="pt-3 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsCreateModalOpen(false)}
+                    className="px-4 py-2.5 rounded-xl text-stone-500 hover:bg-stone-100 dark:bg-stone-950 text-xs font-semibold cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-md shadow-emerald-600/20 transition cursor-pointer disabled:bg-emerald-400"
+                  >
+                    {submitting ? 'Membuat Kelompok...' : 'Buat Kelompok'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

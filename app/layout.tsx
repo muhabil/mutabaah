@@ -21,12 +21,13 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: 'Mutabaah Space | Liqo LDK',
-  description: 'Back to Basic • Track Your Spiritual Glow Up',
+  title: 'LDK Al-Futuwwah ITPLN | Portal Mentoring & Mutabaah Space',
+  description:
+    'Portal Resmi UKM LDK Al-Futuwwah Institut Teknologi PLN (ITPLN) - Pembinaan Karakter, Mentoring Mahasiswa, & Mutabaah Digital.',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'Mutabaah',
+    title: 'Al-Futuwwah ITPLN',
   },
 };
 

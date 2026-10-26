@@ -122,15 +122,23 @@ Memberikan keleluasaan musyrif membuat program akselerasi ibadah mandiri.
 
 ---
 
-### ⚪ v0.8: Portal Publik & Landing Page Al-Futuwwah
+### 🟢 v0.8: Portal Publik & Landing Page Al-Futuwwah *(Selesai)*
 Wajah resmi organisasi yang menjadi etalase kegiatan dan gerbang pendaftaran mentoring.
 
 * **Struktur Routing**:
-  * `/` : Landing page modern profil LDK Al-Futuwwah, filosofi, program kerja, dan call-to-action (CTA).
-  * `/mutabaah/*` : Sub-jalur operasional aplikasi mutabaah dan mentoring.
+  * `/` : Landing page modern profil LDK Al-Futuwwah, filosofi, 4 pilar nilai, showcase Mutabaah Space, FAQ interaktif, dan CTA pendaftaran.
+  * `/login` : Sub-jalur operasional autentikasi (Masuk & Registrasi Anggota/Musyrif).
+  * `/dashboard` : Ruang mutabaah harian & kelompok (didukung direct entry via PWA).
 * **Fitur Utama**:
-  * Informasi kurikulum mentoring (Fase 1: *Back to Basic*, Fase 2: *Reality Check*, Fase 3: *Safe Space*, Fase 4: *Main Character Energy*).
-  * Pendaftaran mentoring terbuka bagi mahasiswa baru secara terpusat.
+  * **Direct PWA Launch**: Konfigurasi `manifest.ts` dengan `start_url: '/dashboard'` dan auto-detect `(display-mode: standalone)` agar anggota yang menginstall PWA langsung masuk ke ruang mutabaah tanpa tertahan di landing page promosi.
+  * **Informasi Kurikulum Mentoring 4 Fase**:
+    * Fase 1: *Back to Basic* (Pondasi Aqidah & Ibadah Wajib).
+    * Fase 2: *Reality Check* (Menjawab Tantangan Zaman Digital & Pemikiran).
+    * Fase 3: *Safe Space & Peer Tasmi'* (Ukhuwah Sejati & Penjagaan Hafalan).
+    * Fase 4: *Main Character Energy* (Kepemimpinan Islami & Kontribusi Nyata).
+  * **Showcase Fitur Mutabaah Space**: Visualisasi transparansi kebaikan (Safe Space harian, Peer-to-peer Tasmi', Spiritual Streak & Freeze Mode Udzur Syar'i).
+  * **Pendaftaran Mentoring Terpusat**: Calon mentee dapat langsung mendaftar liqo baru secara mandiri.
+  * **Dukungan Dark Mode Penuh**: Transisi tema terang dan gelap seragam di seluruh portal publik.
 
 ---
 

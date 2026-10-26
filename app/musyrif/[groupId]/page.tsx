@@ -76,6 +76,7 @@ export default function DynamicGroupMusyrifPage({
   const [meetingTanggal, setMeetingTanggal] = useState('');
   const [meetingJudul, setMeetingJudul] = useState('');
   const [meetingTempat, setMeetingTempat] = useState('Masjid Kampus');
+  const [meetingDeskripsi, setMeetingDeskripsi] = useState('');
   const [attendanceMap, setAttendanceMap] = useState<Record<string, 'hadir' | 'izin' | 'sakit' | 'alpa'>>({});
   const [savingMeeting, setSavingMeeting] = useState(false);
 
@@ -219,6 +220,7 @@ export default function DynamicGroupMusyrifPage({
             tanggal: meetingTanggal,
             judul_materi: meetingJudul.trim(),
             tempat: meetingTempat.trim() || 'Masjid Kampus',
+            deskripsi: meetingDeskripsi.trim() || null,
           },
         ])
         .select()
@@ -240,6 +242,7 @@ export default function DynamicGroupMusyrifPage({
 
       setIsMeetingModalOpen(false);
       setMeetingJudul('');
+      setMeetingDeskripsi('');
       fetchGroupData(unwrappedParams.groupId);
     } catch (err: any) {
       alert('Gagal mencatat pertemuan: ' + err.message);
@@ -248,9 +251,12 @@ export default function DynamicGroupMusyrifPage({
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     localStorage.removeItem('mutabaah_user');
-    router.push('/');
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {}
+    router.push('/login');
   };
 
   return (
@@ -582,6 +588,16 @@ export default function DynamicGroupMusyrifPage({
                         </span>
                       </div>
 
+                      {/* Catatan Sesi & Penugasan jika ada */}
+                      {m.deskripsi && (
+                        <div className="p-3.5 rounded-2xl bg-stone-50 dark:bg-stone-850/80 border border-stone-100 dark:border-stone-800 text-xs text-stone-700 dark:text-stone-300">
+                          <span className="font-bold text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block mb-0.5">
+                            📌 Catatan Pertemuan &amp; Penugasan
+                          </span>
+                          <p className="leading-relaxed whitespace-pre-wrap">{m.deskripsi}</p>
+                        </div>
+                      )}
+
                       {/* Detail Status Anggota */}
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
                         {m.presensi?.map((p: any) => {
@@ -743,6 +759,19 @@ export default function DynamicGroupMusyrifPage({
                     value={meetingJudul}
                     onChange={(e) => setMeetingJudul(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-stone-50 dark:bg-stone-800/60 border border-stone-200 dark:border-stone-800 text-xs font-semibold text-stone-800 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-400 mb-1">
+                    Catatan Pertemuan &amp; Penugasan (Ringkasan materi, tugas bagi yang absen, dll)
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Contoh: Pembahasan Sirah Bab 3. Bagi yang absen/izin, tugas pengganti: resume materi bab 3 dan kirim ke musyrif..."
+                    value={meetingDeskripsi}
+                    onChange={(e) => setMeetingDeskripsi(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-stone-50 dark:bg-stone-800/60 border border-stone-200 dark:border-stone-800 text-xs text-stone-800 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none"
                   />
                 </div>
 

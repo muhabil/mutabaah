@@ -70,12 +70,12 @@ export default function AdminPage() {
   useEffect(() => {
     const saved = localStorage.getItem('mutabaah_user');
     if (!saved) {
-      router.push('/');
+      router.push('/login');
       return;
     }
     const user = JSON.parse(saved);
     if (user.role !== 'admin') {
-      router.push('/');
+      router.push('/login');
       return;
     }
     setCurrentUser(user);
@@ -234,9 +234,12 @@ export default function AdminPage() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     localStorage.removeItem('mutabaah_user');
-    router.push('/');
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {}
+    router.push('/login');
   };
 
   return (

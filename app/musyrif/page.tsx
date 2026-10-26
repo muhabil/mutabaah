@@ -54,7 +54,7 @@ export default function MusyrifHubPage() {
   useEffect(() => {
     const saved = localStorage.getItem('mutabaah_user');
     if (!saved) {
-      router.push('/');
+      router.push('/login');
       return;
     }
     const user: UserData = JSON.parse(saved);
@@ -175,9 +175,12 @@ export default function MusyrifHubPage() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     localStorage.removeItem('mutabaah_user');
-    router.push('/');
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {}
+    router.push('/login');
   };
 
   return (
@@ -260,7 +263,7 @@ export default function MusyrifHubPage() {
             <div>
               <h3 className="font-bold text-stone-700 dark:text-stone-200 text-base">Belum Ada Kelompok Binaan</h3>
               <p className="text-xs text-stone-400 max-w-sm mx-auto mt-1">
-                Antum belum memiliki kelompok binaan. Yuk buat kelompok mentoring baru sekarang untuk mendapatkan kode kelompok!
+                Kamu belum memiliki kelompok binaan. Yuk buat kelompok mentoring baru sekarang untuk mendapatkan kode kelompok!
               </p>
             </div>
             <button
@@ -370,7 +373,7 @@ export default function MusyrifHubPage() {
                     className="w-full px-3.5 py-2.5 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-800/60 text-xs font-mono font-bold uppercase text-stone-800 dark:text-stone-100 focus:bg-white dark:bg-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                   <p className="text-[10px] text-stone-400 mt-1">
-                    Kode ini yang akan antum bagikan ke anggota halaqah antum.
+                    Kode ini yang akan kamu bagikan ke anggota kelompok kamu.
                   </p>
                 </div>
 

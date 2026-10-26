@@ -30,7 +30,26 @@ import {
   Sun,
   Heart,
   Snowflake,
+  ChevronLeft,
+  ChevronRight,
+  X,
 } from 'lucide-react';
+
+const MONTH_NAMES = [
+  'Januari',
+  'Februari',
+  'Maret',
+  'April',
+  'Mei',
+  'Juni',
+  'Juli',
+  'Agustus',
+  'September',
+  'Oktober',
+  'November',
+  'Desember',
+];
+const DAY_NAMES = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Ahd'];
 import { useTheme } from '@/lib/ThemeContext';
 
 interface UserData {
@@ -102,14 +121,24 @@ export default function DashboardAnggota() {
   const [jenisSetoran, setJenisSetoran] = useState<'ziyadah' | 'murajaah'>('ziyadah');
   const [riwayatSetoran, setRiwayatSetoran] = useState<any[]>([]);
 
+  // State Kalender Riwayat Keaktifan (v0.8)
+  const [allLogs, setAllLogs] = useState<any[]>([]);
+  const [showCalendarModal, setShowCalendarModal] = useState(false);
+  const [calendarYear, setCalendarYear] = useState(2026);
+  const [calendarMonth, setCalendarMonth] = useState(9); // 0-indexed
+  const [selectedCalDay, setSelectedCalDay] = useState<string | null>(null);
+
   useEffect(() => {
     const now = new Date();
     const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     setToday(localDate);
+    setCalendarYear(now.getFullYear());
+    setCalendarMonth(now.getMonth());
+    setSelectedCalDay(localDate);
 
     const saved = localStorage.getItem('mutabaah_user');
     if (!saved) {
-      router.push('/');
+      router.push('/login');
       return;
     }
     const parsedUser: UserData = JSON.parse(saved);
@@ -136,17 +165,26 @@ export default function DashboardAnggota() {
         setAlmatsurat(mutabaahData.almatsurat || false);
       }
 
-      // 1b. Cek user & kelompok
-      const { data: dbUser } = await supabase
+      // 1b. Cek user & kelompok (Pilih kolom profil aman, hindari select * agar tidak memicu permission denied pada password)
+      const { data: dbUser, error: userErr } = await supabase
         .from('users')
-        .select('*')
+        .select('id, nim, nama, role, group_id, status, is_udzur')
         .eq('nim', nim)
-        .single();
+        .maybeSingle();
 
-      const activeUser = dbUser || { nim };
+      if (userErr) {
+        console.warn('Gagal memuat profil dbUser:', userErr.message);
+      }
+
+      const savedUserStr = localStorage.getItem('mutabaah_user');
+      const prevUser: UserData | null = savedUserStr ? JSON.parse(savedUserStr) : null;
+      const activeUser: UserData = dbUser
+        ? { ...prevUser, ...dbUser }
+        : prevUser || { nim, nama: '', role: 'anggota' };
+
       if (dbUser) {
-        localStorage.setItem('mutabaah_user', JSON.stringify(dbUser));
-        setUser(dbUser);
+        localStorage.setItem('mutabaah_user', JSON.stringify(activeUser));
+        setUser(activeUser);
         setIsUdzur(dbUser.is_udzur || false);
       }
 
@@ -175,7 +213,7 @@ export default function DashboardAnggota() {
           .from('liqo_meetings')
           .select(`
             *,
-            presensi:liqo_presensi(user_nim, status)
+            presensi:liqo_presensi(user_nim, status, catatan)
           `)
           .eq('group_id', activeUser.group_id)
           .order('tanggal', { ascending: false });
@@ -215,13 +253,15 @@ export default function DashboardAnggota() {
   // Logika Hitung Streak & Evaluasi Badges (v0.4)
   const calculateStreakAndBadges = async (nim: string, todayLog: any, userSetorans: any[] | null) => {
     try {
-      // Ambil 30 hari log mutabaah terakhir
+      // Ambil riwayat log mutabaah untuk kalkulasi streak & kalender keaktifan
       const { data: logs } = await supabase
         .from('mutabaah_logs')
         .select('*')
         .eq('user_nim', nim)
         .order('tanggal', { ascending: false })
-        .limit(30);
+        .limit(180);
+
+      if (logs) setAllLogs(logs);
 
       // 1. Hitung Streak Berturut-turut
       let streak = 0;
@@ -301,7 +341,7 @@ export default function DashboardAnggota() {
 
       showToast(
         nextState
-          ? 'Mode Udzur Syar&apos;i aktif. Streak antum dibekukan (aman) ❄️'
+          ? 'Mode Udzur Syar&apos;i aktif. Streak kamu dibekukan (aman) ❄️'
           : 'Alhamdulillah, Mode Udzur dinonaktifkan kembali ✨'
       );
     } catch (e: any) {
@@ -383,6 +423,18 @@ export default function DashboardAnggota() {
 
       if (error) throw error;
       showToast('Alhamdulillah, Mutabaah hari ini tersimpan di ruang privatmu! 🔒✨');
+
+      const newEntry = {
+        user_nim: user.nim,
+        tanggal: today,
+        shalat_jamaah: shalatJamaah,
+        tilawah_halaman: tilawahHalaman,
+        qiyamul_lail: qiyamulLail,
+        dhuha: dhuha,
+        almatsurat: almatsurat,
+      };
+      setAllLogs((prev) => [newEntry, ...prev.filter((l) => l.tanggal !== today)]);
+      calculateStreakAndBadges(user.nim, newEntry, riwayatSetoran);
     } catch (err: any) {
       alert('Gagal menyimpan: ' + err.message);
     } finally {
@@ -513,9 +565,12 @@ export default function DashboardAnggota() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     localStorage.removeItem('mutabaah_user');
-    router.push('/');
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {}
+    router.push('/login');
   };
 
   const calculateProgress = () => {
@@ -563,7 +618,7 @@ export default function DashboardAnggota() {
               <Calendar className="w-3.5 h-3.5" /> {today}
             </p>
             <h1 className="text-base font-bold text-stone-800 dark:text-stone-100 dark:text-stone-100">
-              Ahlan, {user?.nama}! 👋
+              Halo, {user?.nama}! 👋
             </h1>
           </div>
 
@@ -614,7 +669,7 @@ export default function DashboardAnggota() {
                 Langkah Terakhir: Masuk ke Kelompok
               </h3>
               <p className="text-xs text-stone-500 mt-1 max-w-xs mx-auto leading-relaxed">
-                Fitur mutabaah dan setoran Qur&apos;an akan terbuka setelah Antum terhubung dengan kelompok mentoring.
+                Fitur mutabaah dan setoran Qur&apos;an akan terbuka setelah kamu terhubung dengan kelompok mentoring.
               </p>
             </div>
 
@@ -761,7 +816,7 @@ export default function DashboardAnggota() {
                                 </span>
                                 {m.nim === user?.nim && (
                                   <span className="text-[10px] bg-stone-100 dark:bg-stone-800 text-stone-500 px-1.5 py-0.2 rounded font-medium">
-                                    Antum
+                                    Kamu
                                   </span>
                                 )}
                                 {m.role === 'musyrif' && (
@@ -789,35 +844,47 @@ export default function DashboardAnggota() {
                           Belum ada sesi pertemuan liqo yang tercatat dari Mentor.
                         </p>
                       ) : (
-                        <div className="space-y-2">
+                        <div className="space-y-2.5">
                           {groupMeetings.map((mt) => {
                             const myStatus = mt.presensi?.find((p: any) => p.user_nim === user?.nim)?.status || 'alpa';
+
                             return (
                               <div
                                 key={mt.id}
-                                className="p-3 bg-stone-50 dark:bg-stone-800/60 rounded-2xl flex items-center justify-between gap-3 border border-stone-100 dark:border-stone-800"
+                                className="p-3.5 bg-stone-50 dark:bg-stone-800/60 rounded-2xl border border-stone-100 dark:border-stone-800 space-y-2"
                               >
-                                <div>
-                                  <h4 className="text-xs font-bold text-stone-800 dark:text-stone-100">
-                                    {mt.judul_materi}
-                                  </h4>
-                                  <p className="text-[10px] text-stone-400 mt-0.5">
-                                    {mt.tanggal} • {mt.tempat}
-                                  </p>
+                                <div className="flex items-center justify-between gap-3">
+                                  <div>
+                                    <h4 className="text-xs font-bold text-stone-800 dark:text-stone-100">
+                                      {mt.judul_materi}
+                                    </h4>
+                                    <p className="text-[10px] text-stone-400 mt-0.5">
+                                      {mt.tanggal} • {mt.tempat}
+                                    </p>
+                                  </div>
+                                  <span
+                                    className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-full shrink-0 ${
+                                      myStatus === 'hadir'
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : myStatus === 'izin'
+                                        ? 'bg-blue-100 text-blue-800'
+                                        : myStatus === 'sakit'
+                                        ? 'bg-amber-100 text-amber-800'
+                                        : 'bg-red-100 text-red-800'
+                                    }`}
+                                  >
+                                    {myStatus}
+                                  </span>
                                 </div>
-                                <span
-                                  className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-full shrink-0 ${
-                                    myStatus === 'hadir'
-                                      ? 'bg-emerald-100 text-emerald-800'
-                                      : myStatus === 'izin'
-                                      ? 'bg-blue-100 text-blue-800'
-                                      : myStatus === 'sakit'
-                                      ? 'bg-amber-100 text-amber-800'
-                                      : 'bg-red-100 text-red-800'
-                                  }`}
-                                >
-                                  {myStatus}
-                                </span>
+
+                                {mt.deskripsi && (
+                                  <div className="p-2.5 rounded-xl bg-white dark:bg-stone-900 border border-stone-100 dark:border-stone-800 text-[11px] text-stone-600 dark:text-stone-300">
+                                    <span className="font-semibold text-emerald-600 dark:text-emerald-400 block text-[10px] mb-0.5">
+                                      📌 Catatan Pertemuan &amp; Penugasan:
+                                    </span>
+                                    <p className="whitespace-pre-wrap">{mt.deskripsi}</p>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
@@ -864,7 +931,7 @@ export default function DashboardAnggota() {
                           Form Laporan Evaluasi Pekanan
                         </h3>
                         <p className="text-[11px] text-stone-400 mt-0.5">
-                          Kirim ringkasan amalan pekanan saat diminta oleh mentor/musyrif Antum.
+                          Kirim ringkasan amalan pekanan saat diminta oleh musyrif kamu.
                         </p>
                       </div>
 
@@ -1186,6 +1253,40 @@ export default function DashboardAnggota() {
                   </p>
                 </div>
 
+                {/* Banner Streak Hero (Bisa Diklik -> Buka Kalender Keaktifan) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCalDay(today);
+                    setShowCalendarModal(true);
+                  }}
+                  className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/40 border border-amber-200 dark:border-amber-800 text-amber-950 dark:text-amber-100 flex items-center justify-between text-xs font-semibold cursor-pointer hover:shadow-md hover:scale-[1.01] transition-all group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 text-white flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+                      <Flame className="w-4 h-4 fill-white" />
+                    </div>
+                    <div className="text-left">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-sm text-stone-800 dark:text-stone-100">
+                          {streakDays} Hari Streak
+                        </span>
+                        {isUdzur && (
+                          <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-950 px-1.5 py-0.2 rounded-md">
+                            ❄️ Freeze
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-stone-500 dark:text-stone-400 font-normal">
+                        Ketuk untuk melihat riwayat keaktifanmu
+                      </span>
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-bold text-amber-700 dark:text-amber-300 flex items-center gap-1 bg-white/80 dark:bg-stone-900/80 px-2.5 py-1.5 rounded-xl border border-amber-200/60 dark:border-amber-800/60 shadow-2xs group-hover:bg-amber-100 dark:group-hover:bg-amber-900/40 transition">
+                    <Calendar className="w-3.5 h-3.5" /> Kalender ↗
+                  </span>
+                </button>
+
                 {/* Form Checklist Ibadah Pribadi */}
                 <div className="space-y-3">
                   <div className="flex items-center justify-between pb-1">
@@ -1358,19 +1459,30 @@ export default function DashboardAnggota() {
                   </div>
                 </div>
 
-                {/* Kartu Gamifikasi: Spiritual Streak & Freeze Mode */}
-                <div className="bg-gradient-to-br from-amber-500 via-orange-500 to-amber-600 rounded-3xl p-5 text-white shadow-lg shadow-orange-500/15 space-y-3">
+                {/* Kartu Gamifikasi: Spiritual Streak & Freeze Mode (Bisa Diklik -> Buka Kalender) */}
+                <div
+                  onClick={() => {
+                    setSelectedCalDay(today);
+                    setShowCalendarModal(true);
+                  }}
+                  className="bg-gradient-to-br from-amber-500 via-orange-500 to-amber-600 rounded-3xl p-5 text-white shadow-lg shadow-orange-500/15 space-y-3 cursor-pointer hover:shadow-orange-500/25 transition-all transform hover:-translate-y-0.5 group"
+                >
                   <div className="flex items-center justify-between">
                     <div>
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-amber-100">
-                        Spiritual Consistency Streak
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-amber-100">
+                          Spiritual Consistency Streak
+                        </span>
+                        <span className="text-[9px] font-semibold bg-white/20 px-2 py-0.5 rounded-full flex items-center gap-1 group-hover:bg-white/30 transition">
+                          <Calendar className="w-2.5 h-2.5" /> Kalender ↗
+                        </span>
+                      </div>
                       <div className="flex items-baseline gap-1.5 mt-0.5">
                         <h3 className="text-3xl font-extrabold">{streakDays}</h3>
                         <span className="text-sm font-semibold text-amber-100">Hari Berturut-turut</span>
                       </div>
                     </div>
-                    <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-amber-100">
+                    <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-amber-100 group-hover:scale-105 transition-transform">
                       <Flame className="w-7 h-7" />
                     </div>
                   </div>
@@ -1383,15 +1495,26 @@ export default function DashboardAnggota() {
                       : 'Yuk mulai bangun kebiasaan spiritual harianmu dari sekarang.'}
                   </p>
 
+                  <div className="flex items-center justify-between pt-1 text-[11px] font-medium text-amber-100/90 border-t border-white/15">
+                    <span>👆 Ketuk kartu ini untuk melihat Kalender Keaktifan</span>
+                    <ChevronRight className="w-4 h-4 text-amber-200" />
+                  </div>
+
                   {/* Toggle Udzur Syar'i (Streak Freeze) */}
-                  <div className="pt-2 border-t border-white/20 flex items-center justify-between">
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className="pt-2 border-t border-white/20 flex items-center justify-between"
+                  >
                     <div className="flex items-center gap-2">
                       <Snowflake className={`w-4 h-4 ${isUdzur ? 'text-blue-200 animate-pulse' : 'text-amber-200'}`} />
                       <span className="text-xs font-semibold">Mode Udzur Syar&apos;i (Freeze Streak)</span>
                     </div>
                     <button
                       type="button"
-                      onClick={handleToggleUdzur}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleUdzur();
+                      }}
                       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer ${
                         isUdzur ? 'bg-blue-600' : 'bg-black/25'
                       }`}
@@ -1414,7 +1537,7 @@ export default function DashboardAnggota() {
                         Lencana Spiritual (Milestones)
                       </h3>
                       <p className="text-[11px] text-stone-400 mt-0.5">
-                        Pencapaian personal yang bersifat privat (hanya antum).
+                        Pencapaian personal yang bersifat privat (hanya kamu).
                       </p>
                     </div>
                     <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
@@ -1644,8 +1767,8 @@ export default function DashboardAnggota() {
 
               <p className="text-xs text-stone-500 leading-relaxed">
                 {myGroup
-                  ? `Saat ini Antum berada di kelompok ${myGroup.nama_kelompok}. Masukkan kode baru jika ingin berpindah kelompok.`
-                  : 'Masukkan kode kelompok yang diberikan oleh Musyrif Antum.'}
+                  ? `Saat ini kamu berada di kelompok ${myGroup.nama_kelompok}. Masukkan kode baru jika ingin berpindah kelompok.`
+                  : 'Masukkan kode kelompok yang diberikan oleh musyrif kamu.'}
               </p>
 
               {groupError && (
@@ -1684,6 +1807,268 @@ export default function DashboardAnggota() {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      {/* Modal Kalender Riwayat Keaktifan (v0.8) */}
+      <AnimatePresence>
+        {showCalendarModal && (
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white dark:bg-stone-900 rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-stone-200 dark:border-stone-800 space-y-4 max-h-[92vh] overflow-y-auto"
+            >
+              {/* Header Modal */}
+              <div className="flex items-center justify-between pb-2 border-b border-stone-100 dark:border-stone-800">
+                <div className="flex items-center gap-2">
+                  <div className="w-9 h-9 rounded-xl bg-orange-100 dark:bg-orange-950/80 text-orange-600 dark:text-orange-400 flex items-center justify-center">
+                    <Calendar className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base text-stone-800 dark:text-stone-100 leading-tight">
+                      Kalender Keaktifan
+                    </h3>
+                    <p className="text-[11px] text-stone-400">
+                      Riwayat amalan harian &amp; streak kamu
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowCalendarModal(false)}
+                  className="w-8 h-8 rounded-full bg-stone-100 dark:bg-stone-800 hover:bg-stone-200 text-stone-500 flex items-center justify-center transition cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Ringkasan Performa Bulan Ini */}
+              {(() => {
+                const monthPrefix = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}`;
+                const logsInMonth = allLogs.filter((l) => l.tanggal && l.tanggal.startsWith(monthPrefix));
+                const totalActiveDays = logsInMonth.length;
+                const totalTilawah = logsInMonth.reduce((acc, l) => acc + (Number(l.tilawah_halaman) || 0), 0);
+
+                return (
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="p-2.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200/60 dark:border-amber-800/60">
+                      <span className="text-[10px] uppercase font-bold text-amber-700 dark:text-amber-400 block">
+                        Streak
+                      </span>
+                      <span className="text-base font-extrabold text-amber-900 dark:text-amber-100 mt-0.5 block">
+                        {streakDays} Hari 🔥
+                      </span>
+                    </div>
+                    <div className="p-2.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-800/60">
+                      <span className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400 block">
+                        Aktif Bulan Ini
+                      </span>
+                      <span className="text-base font-extrabold text-emerald-900 dark:text-emerald-100 mt-0.5 block">
+                        {totalActiveDays} Hari 📅
+                      </span>
+                    </div>
+                    <div className="p-2.5 rounded-2xl bg-teal-50 dark:bg-teal-950/40 border border-teal-200/60 dark:border-teal-800/60">
+                      <span className="text-[10px] uppercase font-bold text-teal-700 dark:text-teal-400 block">
+                        Total Tilawah
+                      </span>
+                      <span className="text-base font-extrabold text-teal-900 dark:text-teal-100 mt-0.5 block">
+                        {totalTilawah} Hal 📖
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Navigasi Bulan */}
+              <div className="flex items-center justify-between px-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (calendarMonth === 0) {
+                      setCalendarMonth(11);
+                      setCalendarYear((y) => y - 1);
+                    } else {
+                      setCalendarMonth((m) => m - 1);
+                    }
+                  }}
+                  className="p-1.5 rounded-xl bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300 hover:bg-stone-200 cursor-pointer transition"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+
+                <span className="font-bold text-sm text-stone-800 dark:text-stone-100">
+                  {MONTH_NAMES[calendarMonth]} {calendarYear}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (calendarMonth === 11) {
+                      setCalendarMonth(0);
+                      setCalendarYear((y) => y + 1);
+                    } else {
+                      setCalendarMonth((m) => m + 1);
+                    }
+                  }}
+                  className="p-1.5 rounded-xl bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300 hover:bg-stone-200 cursor-pointer transition"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Header Nama Hari */}
+              <div className="grid grid-cols-7 gap-1 text-center">
+                {DAY_NAMES.map((dn, idx) => (
+                  <span key={idx} className="text-[11px] font-bold text-stone-400 py-1">
+                    {dn}
+                  </span>
+                ))}
+              </div>
+
+              {/* Grid Kalender */}
+              {(() => {
+                const firstDayIndex = (new Date(calendarYear, calendarMonth, 1).getDay() + 6) % 7;
+                const totalDays = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+                const blanks = Array.from({ length: firstDayIndex });
+                const daysArray = Array.from({ length: totalDays }, (_, i) => i + 1);
+
+                return (
+                  <div className="grid grid-cols-7 gap-1">
+                    {blanks.map((_, i) => (
+                      <div key={`blank-${i}`} className="h-9 sm:h-10" />
+                    ))}
+
+                    {daysArray.map((dayNum) => {
+                      const dateString = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+                      const log = allLogs.find((l) => l.tanggal === dateString);
+                      const isSelected = selectedCalDay === dateString;
+                      const isTodayDate = dateString === today;
+
+                      // Hitung skor kelengkapan (0 sampai 5)
+                      let score = 0;
+                      if (log) {
+                        if (log.shalat_jamaah > 0) score++;
+                        if (log.tilawah_halaman > 0) score++;
+                        if (log.qiyamul_lail) score++;
+                        if (log.dhuha) score++;
+                        if (log.almatsurat) score++;
+                      }
+
+                      const isFull = score === 5;
+                      const isPartial = score > 0 && !isFull;
+
+                      return (
+                        <button
+                          key={dayNum}
+                          type="button"
+                          onClick={() => setSelectedCalDay(dateString)}
+                          className={`h-9 sm:h-10 rounded-xl flex flex-col items-center justify-center relative text-xs font-semibold transition-all cursor-pointer ${
+                            isSelected
+                              ? 'ring-2 ring-emerald-500 scale-105 z-10'
+                              : 'hover:scale-105'
+                          } ${
+                            isFull
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : isPartial
+                              ? 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-900 dark:text-emerald-200'
+                              : 'bg-stone-100/70 dark:bg-stone-800/60 text-stone-600 dark:text-stone-400'
+                          } ${isTodayDate && !isSelected ? 'border border-emerald-500' : ''}`}
+                        >
+                          <span>{dayNum}</span>
+                          {isFull && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-300 absolute bottom-1" />
+                          )}
+                          {isPartial && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 absolute bottom-1" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              {/* Legend */}
+              <div className="flex items-center justify-center gap-3 pt-1 text-[10px] text-stone-500 font-medium">
+                <div className="flex items-center gap-1">
+                  <span className="w-3 h-3 rounded-md bg-emerald-600 inline-block" />
+                  <span>Target Penuh</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="w-3 h-3 rounded-md bg-emerald-100 dark:bg-emerald-950 inline-block border border-emerald-300" />
+                  <span>Diisi Sebagian</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="w-3 h-3 rounded-md bg-stone-100 dark:bg-stone-800 inline-block" />
+                  <span>Kosong</span>
+                </div>
+              </div>
+
+              {/* Detail Hari Terpilih */}
+              {selectedCalDay && (() => {
+                const selLog = allLogs.find((l) => l.tanggal === selectedCalDay);
+                const isSelectedToday = selectedCalDay === today;
+
+                return (
+                  <div className="p-3.5 rounded-2xl bg-stone-50 dark:bg-stone-800/60 border border-stone-200 dark:border-stone-800 space-y-2">
+                    <div className="flex items-center justify-between pb-1 border-b border-stone-200/60 dark:border-stone-700/60">
+                      <span className="font-bold text-xs text-stone-800 dark:text-stone-100">
+                        📅 Detail: {selectedCalDay} {isSelectedToday && '(Hari Ini)'}
+                      </span>
+                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                        selLog ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-200 text-stone-600'
+                      }`}>
+                        {selLog ? 'Tercatat' : 'Belum Ada Data'}
+                      </span>
+                    </div>
+
+                    {selLog ? (
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="p-2 rounded-xl bg-white dark:bg-stone-900 border border-stone-100 dark:border-stone-800">
+                          <span className="text-[10px] text-stone-400 block">Shalat Jamaah</span>
+                          <span className="font-bold text-stone-800 dark:text-stone-100">{selLog.shalat_jamaah} / 5 Waktu</span>
+                        </div>
+                        <div className="p-2 rounded-xl bg-white dark:bg-stone-900 border border-stone-100 dark:border-stone-800">
+                          <span className="text-[10px] text-stone-400 block">Tilawah Qur&apos;an</span>
+                          <span className="font-bold text-stone-800 dark:text-stone-100">{selLog.tilawah_halaman} Halaman</span>
+                        </div>
+                        <div className="p-2 rounded-xl bg-white dark:bg-stone-900 border border-stone-100 dark:border-stone-800">
+                          <span className="text-[10px] text-stone-400 block">Qiyamul Lail</span>
+                          <span className="font-bold text-stone-800 dark:text-stone-100">
+                            {selLog.qiyamul_lail ? '✅ Tahajud' : '❌ Belum'}
+                          </span>
+                        </div>
+                        <div className="p-2 rounded-xl bg-white dark:bg-stone-900 border border-stone-100 dark:border-stone-800">
+                          <span className="text-[10px] text-stone-400 block">Dhuha &amp; Ma&apos;tsurat</span>
+                          <span className="font-bold text-stone-800 dark:text-stone-100">
+                            {selLog.dhuha ? '✅ Dhuha' : '❌'}{' '}
+                            {selLog.almatsurat ? '• ✅ Ma\'tsurat' : '• ❌'}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="py-2 text-center text-xs text-stone-400 space-y-2">
+                        <p>Tidak ada catatan mutabaah yang disimpan pada tanggal ini.</p>
+                        {isSelectedToday && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowCalendarModal(false);
+                              setBottomNav('amal');
+                            }}
+                            className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Isi Target Hari Ini</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </motion.div>
           </div>
         )}

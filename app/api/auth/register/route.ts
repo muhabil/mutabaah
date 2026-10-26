@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import bcrypt from 'bcryptjs';
 import { supabaseServer } from '@/lib/supabaseServer';
 
 export async function POST(req: NextRequest) {
@@ -34,73 +33,34 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Cek apakah NIM/Username sudah terdaftar
-    const { data: existingUser } = await supabaseServer
-      .from('users')
-      .select('nim')
-      .eq('nim', trimmedNim)
-      .maybeSingle();
-
-    if (existingUser) {
-      return NextResponse.json(
-        { error: 'NIM / Username ini sudah terdaftar! Silakan langsung login.' },
-        { status: 400 }
-      );
-    }
-
-    // 4. Validasi kode kelompok jika diisi
-    let assignedGroupId: string | null = null;
-    const cleanKode = String(kodeKelompok || '').trim();
-
-    if (roleToRegister === 'anggota' && cleanKode) {
-      const { data: groupData, error: groupErr } = await supabaseServer
-        .from('groups')
-        .select('id, nama_kelompok')
-        .ilike('kode_kelompok', cleanKode)
-        .maybeSingle();
-
-      if (groupErr || !groupData) {
-        return NextResponse.json(
-          { error: `Kode kelompok "${cleanKode}" tidak ditemukan. Silakan kosongkan jika belum punya kode.` },
-          { status: 400 }
-        );
-      }
-
-      assignedGroupId = groupData.id;
-    }
-
-    // 5. Hash password menggunakan bcrypt (cost = 10)
-    const hashedPassword = await bcrypt.hash(trimmedPassword, 10);
-
-    const initialStatus = roleToRegister === 'musyrif' ? 'pending' : 'approved';
     const targetRole = roleToRegister === 'musyrif' ? 'musyrif' : 'anggota';
 
-    // 6. Simpan user baru ke database
-    const { data: newUser, error: insertError } = await supabaseServer
-      .from('users')
-      .insert([
-        {
-          nim: trimmedNim,
-          nama: trimmedNama,
-          password: hashedPassword, // Hash tersimpan aman di database
-          role: targetRole,
-          status: initialStatus,
-          group_id: assignedGroupId,
-          no_hp: String(noHp || '').trim() || null,
-        },
-      ])
-      .select()
-      .single();
+    // 3. Panggil RPC register_user_secure di PostgreSQL
+    const { data: result, error: rpcError } = await supabaseServer.rpc('register_user_secure', {
+      p_nim: trimmedNim,
+      p_nama: trimmedNama,
+      p_password: trimmedPassword,
+      p_role: targetRole,
+      p_no_hp: String(noHp || '').trim() || null,
+      p_kode_kelompok: String(kodeKelompok || '').trim() || null,
+    });
 
-    if (insertError || !newUser) {
+    if (rpcError) {
+      console.error('RPC register_user_secure error:', rpcError);
       return NextResponse.json(
-        { error: 'Gagal mendaftar: ' + (insertError?.message || 'Database error') },
+        { error: 'Gagal mendaftar: ' + rpcError.message },
         { status: 500 }
       );
     }
 
-    // Hapus hash password dari response
-    const { password: _, ...safeUser } = newUser;
+    if (!result || !result.success) {
+      return NextResponse.json(
+        { error: result?.error || 'Pendaftaran gagal.' },
+        { status: 400 }
+      );
+    }
+
+    const safeUser = result.user;
 
     const response = NextResponse.json({
       success: true,
@@ -109,7 +69,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Jika anggota langsung approved, pasang session cookies
-    if (initialStatus === 'approved') {
+    if (safeUser.status === 'approved') {
       const isProduction = process.env.NODE_ENV === 'production';
       response.cookies.set('mutabaah_session', safeUser.nim, {
         httpOnly: true,

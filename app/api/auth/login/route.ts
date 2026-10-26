@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import bcrypt from 'bcryptjs';
 import { supabaseServer } from '@/lib/supabaseServer';
 
 export async function POST(req: NextRequest) {
@@ -14,68 +13,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Ambil user dari database
-    const { data: user, error } = await supabaseServer
-      .from('users')
-      .select('*')
-      .eq('nim', String(nim).trim())
-      .single();
+    // Panggil RPC verify_user_login yang aman di PostgreSQL
+    const { data: result, error: rpcError } = await supabaseServer.rpc('verify_user_login', {
+      p_nim: String(nim).trim(),
+      p_password: String(password),
+    });
 
-    if (error || !user) {
+    if (rpcError) {
+      console.error('RPC verify_user_login error:', rpcError);
       return NextResponse.json(
-        { error: 'NIM/Username atau Password salah, atau belum terdaftar.' },
+        { error: 'Gagal memverifikasi login: ' + rpcError.message },
+        { status: 500 }
+      );
+    }
+
+    if (!result || !result.success) {
+      return NextResponse.json(
+        { error: result?.error || 'NIM/Username atau Password salah.' },
         { status: 401 }
       );
     }
 
-    // Cek password menggunakan bcrypt (dengan fallback lazy migration jika password lama masih plaintext)
-    const storedPass = String(user.password || '');
-    const isBcrypt = storedPass.startsWith('$2a$') || storedPass.startsWith('$2b$');
-    let isMatch = false;
-
-    if (isBcrypt) {
-      isMatch = await bcrypt.compare(password, storedPass);
-    } else {
-      // Lazy migration: jika password lama sama persis dengan plaintext
-      if (storedPass === password) {
-        isMatch = true;
-        // Langsung upgrade ke bcrypt hash di database
-        try {
-          const newHashed = await bcrypt.hash(password, 10);
-          await supabaseServer
-            .from('users')
-            .update({ password: newHashed })
-            .eq('nim', user.nim);
-        } catch (upgradeErr) {
-          console.error('Gagal upgrade hash password:', upgradeErr);
-        }
-      }
-    }
-
-    if (!isMatch) {
-      return NextResponse.json(
-        { error: 'NIM/Username atau Password salah.' },
-        { status: 401 }
-      );
-    }
-
-    // Cek status persetujuan akun
-    if (user.status === 'pending') {
-      return NextResponse.json(
-        { error: 'Akun kamu masih berstatus PENDING. Silakan hubungi Admin Kaderisasi untuk aktivasi.' },
-        { status: 403 }
-      );
-    }
-
-    if (user.status === 'rejected') {
-      return NextResponse.json(
-        { error: 'Mohon maaf, pendaftaran akun kamu belum disetujui oleh Admin.' },
-        { status: 403 }
-      );
-    }
-
-    // Hapus hash password dari response untuk keamanan
-    const { password: _, ...safeUser } = user;
+    const safeUser = result.user;
 
     const response = NextResponse.json({
       success: true,
